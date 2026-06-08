@@ -27,4 +27,4 @@ pub use group::{find_word, orbit, suborbit, verify_group_axioms};
 pub use lattice::Lattice;
 pub use nearest::nearest_triad;
 pub use transform::{apply, apply_l, apply_p, apply_r, PLR, PLRWord};
-pub use voice::VoiceLeading;
+pub use voice::{VoiceLeading, minimal_voice_leading};

@@ -5,7 +5,12 @@ edition = "2021"
 description = "PLR group algebra for collaborative counterpoint — you can never play a wrong note"
 license = "MIT"
 repository = "https://github.com/SuperInstance/groovemesh-plr"
+documentation = "https://docs.rs/groovemesh-plr"
+readme = "README.md"
+homepage = "https://github.com/SuperInstance/groovemesh-plr"
+rust-version = "1.70"
 keywords = ["music", "counterpoint", "plr", "voice-leading", "harmony"]
+categories = ["multimedia::audio", "mathematics"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
