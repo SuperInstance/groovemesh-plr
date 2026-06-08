@@ -1,0 +1,12 @@
+[package]
+name = "groovemesh-plr"
+version = "0.1.0"
+edition = "2021"
+description = "PLR group algebra for collaborative counterpoint — you can never play a wrong note"
+license = "MIT"
+repository = "https://github.com/SuperInstance/groovemesh-plr"
+keywords = ["music", "counterpoint", "plr", "voice-leading", "harmony"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
