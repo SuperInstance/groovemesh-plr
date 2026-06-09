@@ -1,135 +1,248 @@
 # groovemesh-plr
 
-[![crates.io](https://img.shields.io/crates/v/groovemesh-plr.svg)](https://crates.io/crates/groovemesh-plr)
-[![docs.rs](https://docs.rs/groovemesh-plr/badge.svg)](https://docs.rs/groovemesh-plr)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+**PLR group algebra for collaborative counterpoint — you can never play a wrong note.**
 
 ## The Problem
 
-Harmony is a combinatorial explosion. 12 pitch classes × 2 qualities (major/minor) = 24 triads. From any triad, you can move to any of the other 23. Most of those moves sound terrible. How do you navigate?
+In music theory, the space of chord progressions is vast. Most of it sounds bad. For centuries, composers have navigated this space by ear, by rules of thumb ("avoid parallel fifths"), and by studying counterpoint. But there's a mathematical structure underlying "good" voice leading, and it has a name: the **PLR group**.
 
-Music theory gives rules ("avoid parallel fifths", "resolve the leading tone") but these are negative constraints — they tell you what *not* to do. They don't give you a positive generative system.
+If you're building generative music systems, collaborative music tools, or AI composition assistants, you need to *know* that every chord transition you produce is musically valid. You don't want to filter bad progressions — you want a space where bad progressions *can't exist*.
 
-## The Insight
+## The Key Insight
 
-There are exactly three transformations that act on major and minor triads and preserve smooth voice leading:
+The PLR group (Parallel / Leading-tone exchange / Relative) is a group of 3 involutions that acts transitively on the 24 major and minor triads. It's isomorphic to the **dihedral group D₁₂** — the symmetry group of a regular 12-gon. The profound fact is this:
 
-| Transform | Name | What it does | Voice leading |
-|---|---|---|---|
-| **P** | Parallel | Swap major ↔ minor on the same root | 1 semitone moves |
-| **L** | Leading-tone exchange | Swap the third ↔ root between relative triads | 1 semitone moves |
-| **R** | Relative | Move to the relative major/minor | 1 semitone moves |
+> **Every PLR transformation produces a chord that shares at least one common tone with the previous chord.**
 
-These three operations generate a group — the **PLR group** — isomorphic to the dihedral group D₁₂ (the symmetries of a regular 12-gon). Every element of D₁₂ acts on triads, and every word in {P, L, R} produces a valid chord change with minimal voice leading.
+This means voice leading is automatically smooth. You physically cannot "leap" to a distant chord — every step moves at most a few semitones per voice. The PLR lattice is a graph where every edge is a *valid, smooth voice leading*.
 
-This means: **any sequence of P, L, R operations produces a musically valid chord progression.** You literally cannot play a wrong note. The algebra guarantees it.
+This crate implements the full PLR algebra:
+- The 3 generators: P, L, R
+- The 24-element group action on triads (root + quality pairs)
+- The PLR lattice (Cayley graph) with BFS shortest paths
+- Voice-leading distance computation
+- Species counterpoint rules checking
+- **Nearest-triad finding** — give it arbitrary pitches, get the closest valid triad
 
-## The Math
+## Architecture
 
-The 24 triads (12 major + 12 minor) form a set that D₁₂ acts on transitively. Starting from any triad, you can reach any other triad via a PLR word. The group has order 24, matching the 24 triads — this isn't coincidence, it's because the action is *simply transitive*. Every triad has a unique PLR address.
-
-The **Tonnetz** (chicken-wire lattice) visualizes this: a 2D grid where horizontal neighbors are connected by P, vertical neighbors by L, and diagonal neighbors by R. Navigation on the lattice IS harmonic progression.
-
-## Using The Library
-
-```rust
-use groovemesh_plr::{Triad, PitchClass, Quality, apply_p, apply_l, apply_r};
-
-// Start with C major
-let c_major = Triad::new(PitchClass::C, Quality::Major);
-
-// RLP: a classic ii-V-I disguised as group theory
-let a_min = apply_r(&c_major);    // C major → A minor (relative)
-let f_major = apply_l(&a_min);    // A minor → F major (leading tone)
-let f_minor = apply_p(&f_major);  // F major → F minor (parallel)
-
-println!("C → {} → {} → {}", a_min, f_major, f_minor);
-// Output: C → Am → F → Fm
+```
+                          ┌──────────────┐
+                          │   Triad      │
+                          │ (root+quality)│
+                          └──────┬───────┘
+                                 │
+                 ┌───────────────┼───────────────┐
+                 │               │               │
+          ┌──────▼──────┐ ┌─────▼──────┐ ┌──────▼──────┐
+          │   P(allel)  │ │  L(eading) │ │  R(elative) │
+          │  flip quality│ │  mediant   │ │ rel. major/ │
+          │  same root  │ │  exchange  │ │   minor     │
+          └──────┬──────┘ └─────┬──────┘ └──────┬──────┘
+                 │               │               │
+                 └───────────────┼───────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │      PLR Word           │
+                    │ (sequence of P, L, R)   │
+                    │ with compose, inverse,  │
+                    │ reduce                  │
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │     PLR Lattice         │
+                    │ (24 nodes, 3 edges each)│
+                    │ BFS shortest path,      │
+                    │ distance, at_distance   │
+                    └────────────┬────────────┘
+                                 │
+              ┌──────────────────┼──────────────────┐
+              │                  │                  │
+     ┌────────▼────────┐ ┌──────▼───────┐ ┌───────▼────────┐
+     │  Voice Leading  │ │ Counterpoint │ │   Nearest      │
+     │  (minimal       │ │ Rules        │ │   Triad        │
+     │   semitone      │ │ (no parallel │ │ (find closest  │
+     │   distance)     │ │  5ths/octs)  │ │  valid triad)  │
+     └─────────────────┘ └──────────────┘ └────────────────┘
 ```
 
-### Finding paths between any two triads
+### Module Overview
 
-```rust
-use groovemesh_plr::{Triad, PitchClass, Quality, find_word};
+| Module | Purpose |
+|--------|---------|
+| `chord` | Triad (root + quality), pitch classes, note names |
+| `transform` | P, L, R transformations, PLR words (sequences) |
+| `group` | Orbit computation, Cayley table, word finding, axiom verification |
+| `lattice` | PLR lattice graph with BFS shortest path |
+| `voice` | Voice-leading distance computation |
+| `counterpoint` | Species counterpoint rules (no parallel 5ths/octaves) |
+| `nearest` | Find the closest valid triad to arbitrary pitches |
 
-let start = Triad::new(PitchClass::C, Quality::Major);
-let target = Triad::new(PitchClass::G, Quality::Minor);
+## The Math: PLR Transformations
 
-// find_word returns the shortest PLR sequence connecting them
-let word = find_word(&start, &target).unwrap();
-println!("Path: {:?}", word); // e.g., PLR
+Given a triad T = (root, quality), the three transformations are:
+
+### P — Parallel
+Same root, flip quality. P(C) = Cm, P(Am) = A.
+```
+C  major → C  minor    (root stays, third drops by semitone)
+G  minor → G  major    (root stays, third rises by semitone)
 ```
 
-### The full orbit
-
-```rust
-use groovemesh_plr::{Triad, PitchClass, Quality, orbit};
-
-let start = Triad::new(PitchClass::C, Quality::Major);
-let all_24 = orbit(&start);
-assert_eq!(all_24.len(), 24); // reaches every triad exactly once
+### L — Leading-tone Exchange
+Major: the third becomes the new root of a minor triad. L(C) = Em.
+Minor: the fifth moves up a semitone to become the root of a major triad. L(Cm) = A♭.
+```
+L(C)  = Em    (E = third of C = root + 4)
+L(Cm) = Ab    (Ab = fifth of Cm + 1 semitone)
 ```
 
-## Counterpoint Validation
-
-The PLR group guarantees smooth voice leading, but classical counterpoint has additional constraints (no parallel fifths, no parallel octaves, etc.). The `CounterpointRules` module checks these:
-
-```rust
-use groovemesh_plr::{CounterpointRules, Triad, PitchClass, Quality};
-
-let rules = CounterpointRules::strict();
-let c = Triad::new(PitchClass::C, Quality::Major);
-let g = Triad::new(PitchClass::G, Quality::Major);
-let ok = rules.check_progression(&c, &g); // checks for parallels
+### R — Relative
+Relative major/minor, moving by a minor third.
+```
+R(C)  = Am    (down a minor third)
+R(Am) = C     (up a minor third)
 ```
 
-## Voice Leading Computation
+### Key Properties
 
-Given two triads, `VoiceLeading` finds the minimal-distance part assignment:
+- **Involution**: P² = L² = R² = identity (each is its own inverse)
+- **Transitivity**: starting from any triad, you can reach all 24 triads
+- **Isomorphism**: the PLR group ≅ D₁₂ (dihedral group of order 24)
+- **Common tones**: every PLR edge shares at least one pitch class
 
-```rust
-use groovemesh_plr::VoiceLeading;
-
-let c_major = Triad::new(PitchClass::C, Quality::Major);
-let a_minor = Triad::new(PitchClass::A, Quality::Minor);
-let vl = VoiceLeading::between(&c_major, &a_minor);
-println!("Total semitone distance: {}", vl.total_distance());
-```
-
-## The Tonnetz Lattice
+## Quick Start
 
 ```rust
-use groovemesh_plr::Lattice;
+use groovemesh_plr::{Triad, Quality, apply_p, apply_l, apply_r, PLR, apply};
 
-let lattice = Lattice::standard();
-let neighbors = lattice.neighbors(&Triad::new(PitchClass::C, Quality::Major));
-// Returns all triads reachable by a single P, L, or R move
+// Create triads
+let c_major = Triad::new_unchecked(0, Quality::Major);
+let a_minor = Triad::new_unchecked(9, Quality::Minor);
+
+// Apply transformations
+assert_eq!(apply_p(c_major), Triad::new_unchecked(0, Quality::Minor)); // C → Cm
+assert_eq!(apply_l(c_major), Triad::new_unchecked(4, Quality::Minor)); // C → Em
+assert_eq!(apply_r(c_major), Triad::new_unchecked(9, Quality::Minor)); // C → Am
+
+// P² = identity (involution)
+assert_eq!(apply(PLR::P, apply(PLR::P, c_major)), c_major);
 ```
 
-## Module Map
+## Finding Paths Between Chords
 
-| Module | What it does |
-|---|---|
-| `chord` | `Triad`, `PitchClass`, `Quality` — the 24 triads |
-| `transform` | `apply_p/l/r`, `PLRWord`, `PLR` — the D₁₂ generators |
-| `group` | `orbit`, `suborbit`, `find_word`, `verify_group_axioms` — group-theoretic tools |
-| `lattice` | `Lattice` — the Tonnetz (chicken-wire graph) |
-| `voice` | `VoiceLeading` — minimal-distance part assignment |
-| `counterpoint` | `CounterpointRules` — classical constraint checking |
-| `nearest` | `nearest_triad` — find closest triad from arbitrary pitch classes |
+```rust
+use groovemesh_plr::{Triad, Quality, Lattice, find_word};
 
-## Design Decisions
+let c = Triad::new_unchecked(0, Quality::Major);
+let fs = Triad::from_name("F#m").unwrap();
 
-- **Why only major/minor?** The PLR group is specifically about the 24 major/minor triads. Seventh chords and extended harmonies require larger groups (the UTT group, contextual transformations) — that's a future crate.
-- **Why D₁₂ and not Tₙ/I?** Tₙ/I (transposition/inversion) is the standard music-theory group, but it doesn't preserve smooth voice leading. PLR does. The two groups are isomorphic, but PLR is the one that matters for harmonic navigation.
-- **Why integer semitones?** Voice leading distance is measured in semitones because that's the smallest unit that distinguishes triads in 12-TET. If you want microtonal PLR, you'd change the PitchClass representation.
+// Find the shortest PLR path
+let lattice = Lattice::build();
+let path = lattice.shortest_path(c, fs).unwrap();
+println!("C → F#m: {} steps: {:?}", path.len(), path);
 
-## Links
+// Or find the PLR word (sequence of operations)
+let word = find_word(c, fs).unwrap();
+println!("Word: {} (applied: {})", word, word.apply(c));
+```
 
-- [Documentation](https://docs.rs/groovemesh-plr)
-- [Repository](https://github.com/SuperInstance/groovemesh-plr)
-- [crates.io](https://crates.io/crates/groovemesh-plr)
-- [Callender, Quinn, and Tymoczko (2008)](https://doi.org/10.1090/S0273-0979-08-01194-7) — the foundational paper on geometric music theory
+## Voice Leading
+
+```rust
+use groovemesh_plr::{Triad, Quality, minimal_voice_leading, voice_leading_distance};
+
+let c = Triad::new_unchecked(0, Quality::Major);
+let cm = Triad::new_unchecked(0, Quality::Minor);
+
+let vl = minimal_voice_leading(c, cm);
+println!("C → Cm: distance = {} semitones", vl.distance);
+println!("Movements: {:?}", vl.movements);
+```
+
+## Counterpoint Rules
+
+```rust
+use groovemesh_plr::{Triad, Quality, CounterpointRules};
+
+let rules = CounterpointRules::new();
+let c = Triad::new_unchecked(0, Quality::Major);
+let cm = Triad::new_unchecked(0, Quality::Minor);
+
+// Check if a transition is legal
+assert!(rules.check(c, cm).is_ok()); // P transition: always legal
+
+// Find a legal PLR path from C to Am
+let am = Triad::new_unchecked(9, Quality::Minor);
+let path = rules.legal_path(c, am, 10);
+println!("Legal path C → Am: {} steps", path.len());
+```
+
+## Nearest Triad from Arbitrary Pitches
+
+```rust
+use groovemesh_plr::{nearest_triad, nearest_plr_triad, Triad, Quality};
+
+// Someone plays C, E, G → that's C major
+let triad = nearest_triad(&[0, 4, 7]).unwrap();
+assert_eq!(triad, Triad::new_unchecked(0, Quality::Major));
+
+// Someone plays C, F# — find the closest triad
+let ambiguous = nearest_triad(&[0, 6]).unwrap();
+println!("Closest triad to C+F#: {}", ambiguous);
+
+// From a current triad, take one PLR step toward a pitch set
+let c = Triad::new_unchecked(0, Quality::Major);
+let next = nearest_plr_triad(c, &[9, 0, 4]); // Am pitches
+assert_eq!(next, Triad::new_unchecked(9, Quality::Minor)); // R(C) = Am
+```
+
+## Group Theory
+
+```rust
+use groovemesh_plr::{orbit, verify_group_axioms, cayley_table, Triad, Quality};
+
+// The orbit of any triad is all 24 triads (transitivity)
+let c = Triad::new_unchecked(0, Quality::Major);
+let all = orbit(c);
+assert_eq!(all.len(), 24);
+
+// Verify group axioms
+assert!(verify_group_axioms());
+
+// Full Cayley table
+let table = cayley_table();
+println!("Cayley table has {} entries", table.len());
+```
+
+## Performance
+
+- **Triad operations**: O(1) — arithmetic on pitch classes
+- **Voice leading**: O(1) — tries 6 permutations of 3 voices
+- **BFS shortest path**: O(24) — the lattice has only 24 nodes
+- **Nearest triad**: O(24) — scores all triads
+- **Group operations**: O(24) for orbits, O(24) for Cayley table
+
+The entire PLR lattice fits in constant space. There are only 24 triads and 72 edges (3 per triad). This means every operation is effectively O(1).
+
+## Comparison
+
+| Feature | groovemesh-plr | Music21 (Python) | Traditional theory |
+|---------|---------------|-------------------|-------------------|
+| PLR group | ✅ Full implementation | Partial | Manual |
+| Voice leading | ✅ Minimal distance | Yes | Approximate |
+| Counterpoint rules | ✅ Configurable | Yes | Manual |
+| Nearest triad | ✅ From arbitrary pitches | No | N/A |
+| Lattice graph | ✅ BFS shortest path | No | N/A |
+| Group verification | ✅ Automated | No | N/A |
+| Language | Rust (zero-cost) | Python | N/A |
+
+## SuperInstance Ecosystem
+
+`groovemesh-plr` provides voice-leading algebra for:
+- `spreadsheet-engine` — MIDI cells can use PLR for smooth harmonic transitions
+- `lotka-beats` — species compete within PLR-legal harmonic spaces
+- `tropical-synth` — timbre morphing along PLR lattice edges
 
 ## License
 
